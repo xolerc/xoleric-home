@@ -1,6 +1,13 @@
 {
-  "deployed_at": "2026-10-20T19:47:29Z",
-  "commit": "3780aa9",
+  "deployed_at": "2026-10-20T20:03:12Z",
+  "commit": "ffae896",
   "live": "https://xolerc.github.io/xoleric-home/",
-  "pages_api": "legacy"
+  "pages": {
+    "build_type": "legacy",
+    "source": {
+      "branch": "gh-pages",
+      "path": "/"
+    },
+    "html_url": "https://xolerc.github.io/xoleric-home/"
+  }
 }
