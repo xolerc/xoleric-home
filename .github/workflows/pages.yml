@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -16,56 +16,77 @@ concurrency:
 
 jobs:
   deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      # --- Pages'ni yoqish: GITHUB_TOKEN orqali, javob job summary'ga yoziladi ---
-      - name: Enable Pages via API
-        id: enable
-        continue-on-error: true
+      # 1) Pages konfiguratsiyasini tekshirish va `main` branshiga yo'naltirish
+      - name: Configure Pages
+        id: cfg
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          ARTIFACT: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set +e
-          S="$GITHUB_STEP_SUMMARY"
-          echo "### 📄 Pages holati" >> "$S"
-          H="-H Authorization:token:$GH_TOKEN -H Accept:application/vnd.github+json -H X-GitHub-Api-Version:2022-11-28"
-          code=$(curl -s -o /tmp/p.json -w "%{http_code}" $H "https://api.github.com/repos/$REPO/pages")
-          echo "- GET /pages → \`$code\`" >> "$S"
-          if [ "$code" != "200" ]; then
-            echo "" >> "$S"
-            echo '```json' >> "$S"; head -c 600 /tmp/p.json >> "$S"; echo '```' >> "$S"
-            echo "" >> "$S"
-            code2=$(curl -s -o /tmp/p2.json -w "%{http_code}" -X PUT $H -H "Content-Type: application/json" \
+          H=(-H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
+          {
+            echo "### 📄 Pages konfiguratsiyasi"
+            echo ""
+            code=$(curl -s -o /tmp/pages.json -w "%{http_code}" "${H[@]}" "https://api.github.com/repos/$REPO/pages")
+            echo "- holat: \`$code\`"
+            if [ "$code" = "200" ]; then
+              echo "- build_type: \`$(python3 -c "import json;d=json.load(open('/tmp/pages.json'));print(d.get('build_type','?'))")\`"
+              echo "- source: \`$(python3 -c "import json;d=json.load(open('/tmp/pages.json'));s=d.get('source') or {};print(s.get('branch','?'),'/',s.get('path','?'))")\`"
+              echo "- url: $(python3 -c "import json;d=json.load(open('/tmp/pages.json'));print(d.get('html_url','?'))")"
+            fi
+            echo ""
+            echo "**`main` branshiga o'tkazish**"
+            pcode=$(curl -s -o /tmp/put.json -w "%{http_code}" -X PUT "${H[@]}" -H "Content-Type: application/json" \
               -d '{"source":{"branch":"main","path":"/"}}' "https://api.github.com/repos/$REPO/pages")
-            echo "- PUT /pages (source=main) → \`$code2\`" >> "$S"
-            echo '```json' >> "$S"; head -c 600 /tmp/p2.json >> "$S"; echo '```' >> "$S"
-          fi
-          echo "" >> "$S"
-          echo "- Log: $ARTIFACT" >> "$S"
+            echo "- PUT /pages → \`$pcode\`"
+            python3 - <<'PY' 2>/dev/null || true
+          import json
+          d = json.load(open('/tmp/put.json'))
+          print("- javob: `" + str(d.get('message') or d.get('build_type') or d.get('source') or d.get('html_url'))[:120] + "`")
+          PY
+            echo ""
+            echo "- live: https://xolerc.github.io/xoleric-home/"
+          } | tee /tmp/diag.txt
+          cat /tmp/diag.txt >> "$GITHUB_STEP_SUMMARY"
 
-      # --- Sahifani tayyorlash (gh-pages branshi ham shu tarkibda) ---
-      - name: Prepare static site
+      # 2) Holat faylini repo'ga yozish (keyin raqamli tekshirish uchun)
+      - name: Publish status file
+        continue-on-error: true
+        run: |
+          set +e
+          mkdir -p .madina
+          {
+            echo '{'
+            echo '  "deployed_at": "'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'",'
+            echo '  "commit": "'"$(git rev-parse --short HEAD)"'",'
+            echo '  "live": "https://xolerc.github.io/xoleric-home/",'
+            echo '  "pages_api": '"$(python3 -c "import json;d=json.load(open('/tmp/pages.json'));print(json.dumps(d.get('build_type') or (d.get('source') or {}).get('branch')))" 2>/dev/null || echo null)"''
+            echo '}'
+          } > .madina/pages-status.json
+          git config user.name "xoleric-bot"
+          git config user.email "xolerc@users.noreply.github.com"
+          git add .madina/pages-status.json
+          git commit -m "chore: pages holat fayli [skip ci]" || true
+          git push origin HEAD:main || true
+
+      # 3) Arxiv (Actions artifact) — zaxira sifatida
+      - name: Prepare artifact
         run: |
           mkdir -p _site
           cp index.html three.min.js _site/
           touch _site/.nojekyll
           ls -la _site
 
-      - name: Setup Pages
-        id: pages
-        continue-on-error: true
-        uses: actions/configure-pages@v5
-
       - name: Upload artifact
-        if: success() || steps.pages.outcome == 'failure'
+        continue-on-error: true
         uses: actions/upload-pages-artifact@v3
         with:
           path: "_site"
@@ -83,8 +104,8 @@ jobs:
         run: |
           {
             echo ""
-            echo "### 🚀 Deploy natijasi"
+            echo "### 🚀 Natija"
             echo "- deploy-pages: \`$DEPLOY_OUTCOME\`"
-            echo "- page_url: ${DEPLOY_URL:-yo'q}"
+            echo "- page_url: ${DEPLOY_URL:-branch orqali (main) — avtomatik}"
             echo "- live: https://xolerc.github.io/xoleric-home/"
           } >> "$GITHUB_STEP_SUMMARY"
