@@ -441,14 +441,14 @@ function shock(p){
   var t=performance.now()/1000;
   if(t-lastShock<.34)return false;                  /* cooldown — spam va VRAM leak bo'lmasin */
   lastShock=t;
-  var rad=2.3+stars*.14,dmg=30+stars*5,hitAny=false;
+  var rad=2.3+stars*.14,dmg=34+stars*5,hitAny=false;
   chars.forEach(function(c){
     if(c.down>0)return;
     var q=c.g.position,dx=q.x-p.x,dz=q.z-p.z,d=Math.hypot(dx,dz);
     if(d<rad){
       hitAny=true;
-      c.hp-=dmg;c.stun=1.25;c.state='walk';c.path=[];c.wait=.9;c.pt=0;
-      var iv=1/(d||1);c.kx=dx*iv*8;c.kz=dz*iv*8;
+      c.hp-=dmg;c.stun=1.5;c.state='walk';c.path=[];c.wait=.9;c.pt=0;
+      var iv=1/(d||1);c.kx=dx*iv*3.4;c.kz=dz*iv*3.4;
       burst(q,[1,.85,.25],20,4.4);
       if(c.hp<=0){
         c.hp=0;c.down=6;score++;best=Math.max(best,score);
