@@ -23,7 +23,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      # 1) Pages konfiguratsiyasini tekshirish va `main` branshiga yo'naltirish
+      # 1) Pages konfiguratsiyasini tekshirish va "GitHub Actions" manbasiga o'tkazish
       - name: Configure Pages
         id: cfg
         env:
@@ -33,27 +33,24 @@ jobs:
           set +e
           H=(-H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
           {
-            echo "### 📄 Pages konfiguratsiyasi"
+            echo "### 📄 Pages konfiguratsiyasi (avvalgi)"
+            echo '```json'
+            curl -s "${H[@]}" "https://api.github.com/repos/$REPO/pages" -o /tmp/pages.json
+            head -c 900 /tmp/pages.json
+            echo '```'
             echo ""
-            code=$(curl -s -o /tmp/pages.json -w "%{http_code}" "${H[@]}" "https://api.github.com/repos/$REPO/pages")
-            echo "- holat: \`$code\`"
-            if [ "$code" = "200" ]; then
-              echo "- build_type: \`$(python3 -c "import json;d=json.load(open('/tmp/pages.json'));print(d.get('build_type','?'))")\`"
-              echo "- source: \`$(python3 -c "import json;d=json.load(open('/tmp/pages.json'));s=d.get('source') or {};print(s.get('branch','?'),'/',s.get('path','?'))")\`"
-              echo "- url: $(python3 -c "import json;d=json.load(open('/tmp/pages.json'));print(d.get('html_url','?'))")"
-            fi
-            echo ""
-            echo "**`main` branshiga o'tkazish**"
+            echo "**`build_type=workflow` ga o'tkazish**"
             pcode=$(curl -s -o /tmp/put.json -w "%{http_code}" -X PUT "${H[@]}" -H "Content-Type: application/json" \
-              -d '{"source":{"branch":"main","path":"/"}}' "https://api.github.com/repos/$REPO/pages")
+              -d '{"build_type":"workflow"}' "https://api.github.com/repos/$REPO/pages")
             echo "- PUT /pages → \`$pcode\`"
-            python3 - <<'PY' 2>/dev/null || true
-          import json
-          d = json.load(open('/tmp/put.json'))
-          print("- javob: `" + str(d.get('message') or d.get('build_type') or d.get('source') or d.get('html_url'))[:120] + "`")
-          PY
+            echo '```json'
+            head -c 600 /tmp/put.json
+            echo '```'
             echo ""
-            echo "- live: https://xolerc.github.io/xoleric-home/"
+            echo "**Yangi konfiguratsiya**"
+            echo '```json'
+            curl -s "${H[@]}" "https://api.github.com/repos/$REPO/pages" | head -c 900
+            echo '```'
           } | tee /tmp/diag.txt
           cat /tmp/diag.txt >> "$GITHUB_STEP_SUMMARY"
 
@@ -63,14 +60,21 @@ jobs:
         run: |
           set +e
           mkdir -p .madina
-          {
-            echo '{'
-            echo '  "deployed_at": "'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'",'
-            echo '  "commit": "'"$(git rev-parse --short HEAD)"'",'
-            echo '  "live": "https://xolerc.github.io/xoleric-home/",'
-            echo '  "pages_api": '"$(python3 -c "import json;d=json.load(open('/tmp/pages.json'));print(json.dumps(d.get('build_type') or (d.get('source') or {}).get('branch')))" 2>/dev/null || echo null)"''
-            echo '}'
-          } > .madina/pages-status.json
+          python3 - <<'PY' > .madina/pages-status.json
+          import json, datetime, subprocess
+          try:
+              cfg = json.load(open('/tmp/pages.json'))
+          except Exception:
+              cfg = {}
+          out = {
+              "deployed_at": datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+              "commit": subprocess.run(['git','rev-parse','--short','HEAD'],capture_output=True,text=True).stdout.strip(),
+              "live": "https://xolerc.github.io/xoleric-home/",
+              "pages": {"build_type": cfg.get("build_type"), "source": cfg.get("source"), "html_url": cfg.get("html_url")},
+          }
+          print(json.dumps(out, indent=2, ensure_ascii=False))
+          PY
+          cat .madina/pages-status.json
           git config user.name "xoleric-bot"
           git config user.email "xolerc@users.noreply.github.com"
           git add .madina/pages-status.json
