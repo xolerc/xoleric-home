@@ -1,0 +1,2 @@
+# xoleric-home
+core home
