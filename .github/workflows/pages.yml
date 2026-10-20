@@ -24,26 +24,67 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Pages
-        id: pages
-        uses: actions/configure-pages@v5
-        with:
-          # Sahifa hali yo'q bo'lsa, GITHUB_TOKEN orqali avtomatik yoqamiz
-          enablement: true
-          token: ${{ secrets.GITHUB_TOKEN }}
+      # --- Pages'ni yoqish: GITHUB_TOKEN orqali, javob job summary'ga yoziladi ---
+      - name: Enable Pages via API
+        id: enable
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          ARTIFACT: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set +e
+          S="$GITHUB_STEP_SUMMARY"
+          echo "### 📄 Pages holati" >> "$S"
+          H="-H Authorization:token:$GH_TOKEN -H Accept:application/vnd.github+json -H X-GitHub-Api-Version:2022-11-28"
+          code=$(curl -s -o /tmp/p.json -w "%{http_code}" $H "https://api.github.com/repos/$REPO/pages")
+          echo "- GET /pages → \`$code\`" >> "$S"
+          if [ "$code" != "200" ]; then
+            echo "" >> "$S"
+            echo '```json' >> "$S"; head -c 600 /tmp/p.json >> "$S"; echo '```' >> "$S"
+            echo "" >> "$S"
+            code2=$(curl -s -o /tmp/p2.json -w "%{http_code}" -X PUT $H -H "Content-Type: application/json" \
+              -d '{"source":{"branch":"main","path":"/"}}' "https://api.github.com/repos/$REPO/pages")
+            echo "- PUT /pages (source=main) → \`$code2\`" >> "$S"
+            echo '```json' >> "$S"; head -c 600 /tmp/p2.json >> "$S"; echo '```' >> "$S"
+          fi
+          echo "" >> "$S"
+          echo "- Log: $ARTIFACT" >> "$S"
 
+      # --- Sahifani tayyorlash (gh-pages branshi ham shu tarkibda) ---
       - name: Prepare static site
         run: |
           mkdir -p _site
           cp index.html three.min.js _site/
           touch _site/.nojekyll
-          echo "--- _site ---" && ls -la _site
+          ls -la _site
+
+      - name: Setup Pages
+        id: pages
+        continue-on-error: true
+        uses: actions/configure-pages@v5
 
       - name: Upload artifact
+        if: success() || steps.pages.outcome == 'failure'
         uses: actions/upload-pages-artifact@v3
         with:
           path: "_site"
 
       - name: Deploy to GitHub Pages
         id: deployment
+        continue-on-error: true
         uses: actions/deploy-pages@v4
+
+      - name: Natija
+        if: always()
+        env:
+          DEPLOY_OUTCOME: ${{ steps.deployment.outcome }}
+          DEPLOY_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          {
+            echo ""
+            echo "### 🚀 Deploy natijasi"
+            echo "- deploy-pages: \`$DEPLOY_OUTCOME\`"
+            echo "- page_url: ${DEPLOY_URL:-yo'q}"
+            echo "- live: https://xolerc.github.io/xoleric-home/"
+          } >> "$GITHUB_STEP_SUMMARY"
