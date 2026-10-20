@@ -64,6 +64,7 @@ jobs:
         uses: actions/deploy-pages@v4
 
       # 3) Klassik manba (gh-pages branshi) rejimi uchun sinxronlash
+      #    (alohida klonda — main branshinga tegilmaydi)
       - name: Sync gh-pages branch
         id: sync
         continue-on-error: true
@@ -71,16 +72,19 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set +e
-          git config user.name "xoleric-bot"
-          git config user.email "xolerc@users.noreply.github.com"
-          git fetch origin gh-pages
-          git checkout -B gh-pages origin/gh-pages
+          AUTH="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          rm -rf _sync && mkdir -p _sync && cd _sync
+          git init -q -b gh-pages
+          git remote add origin https://github.com/${{ github.repository }}.git
+          git -c http.extraheader="$AUTH" fetch -q --depth 1 origin gh-pages
+          git checkout -q FETCH_HEAD
           cp "$GITHUB_WORKSPACE/index.html" .
           cp "$GITHUB_WORKSPACE/three.min.js" .
           git add -A
-          git commit -m "deploy: $(git rev-parse --short HEAD)" || true
-          git push origin gh-pages
-          echo "exit=$?" >> $GITHUB_STEP_SUMMARY
+          git -c user.name="xoleric-bot" -c user.email="xolerc@users.noreply.github.com" \
+              commit -q -m "deploy: ${GITHUB_SHA::8}" || true
+          git -c http.extraheader="$AUTH" push -q origin HEAD:gh-pages
+          echo "- gh-pages sync exit=$?" >> "$GITHUB_STEP_SUMMARY"
 
       # 4) Jonli saytni SOLISHTIRIB tekshirish (md5)
       - name: Verify live deployment
