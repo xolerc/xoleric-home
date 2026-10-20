@@ -23,7 +23,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      # 1) Pages konfiguratsiyasini tekshirish va "GitHub Actions" manbasiga o'tkazish
+      # 1) Pages konfiguratsiyasi
       - name: Configure Pages
         id: cfg
         env:
@@ -33,55 +33,18 @@ jobs:
           set +e
           H=(-H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
           {
-            echo "### 📄 Pages konfiguratsiyasi (avvalgi)"
-            echo '```json'
+            echo "### 📄 Pages konfiguratsiyasi"
             curl -s "${H[@]}" "https://api.github.com/repos/$REPO/pages" -o /tmp/pages.json
-            head -c 900 /tmp/pages.json
-            echo '```'
+            echo '```json'; head -c 700 /tmp/pages.json; echo '```'
             echo ""
-            echo "**`build_type=workflow` ga o'tkazish**"
+            echo "**`build_type=workflow` ga o'tish urinish-bozorishi**"
             pcode=$(curl -s -o /tmp/put.json -w "%{http_code}" -X PUT "${H[@]}" -H "Content-Type: application/json" \
               -d '{"build_type":"workflow"}' "https://api.github.com/repos/$REPO/pages")
             echo "- PUT /pages → \`$pcode\`"
-            echo '```json'
-            head -c 600 /tmp/put.json
-            echo '```'
-            echo ""
-            echo "**Yangi konfiguratsiya**"
-            echo '```json'
-            curl -s "${H[@]}" "https://api.github.com/repos/$REPO/pages" | head -c 900
-            echo '```'
           } | tee /tmp/diag.txt
           cat /tmp/diag.txt >> "$GITHUB_STEP_SUMMARY"
 
-      # 2) Holat faylini repo'ga yozish (keyin raqamli tekshirish uchun)
-      - name: Publish status file
-        continue-on-error: true
-        run: |
-          set +e
-          mkdir -p .madina
-          python3 - <<'PY' > .madina/pages-status.json
-          import json, datetime, subprocess
-          try:
-              cfg = json.load(open('/tmp/pages.json'))
-          except Exception:
-              cfg = {}
-          out = {
-              "deployed_at": datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
-              "commit": subprocess.run(['git','rev-parse','--short','HEAD'],capture_output=True,text=True).stdout.strip(),
-              "live": "https://xolerc.github.io/xoleric-home/",
-              "pages": {"build_type": cfg.get("build_type"), "source": cfg.get("source"), "html_url": cfg.get("html_url")},
-          }
-          print(json.dumps(out, indent=2, ensure_ascii=False))
-          PY
-          cat .madina/pages-status.json
-          git config user.name "xoleric-bot"
-          git config user.email "xolerc@users.noreply.github.com"
-          git add .madina/pages-status.json
-          git commit -m "chore: pages holat fayli [skip ci]" || true
-          git push origin HEAD:main || true
-
-      # 3) Arxiv (Actions artifact) — zaxira sifatida
+      # 2) GitHub Actions artefakti (workflow manba rejimi uchun)
       - name: Prepare artifact
         run: |
           mkdir -p _site
@@ -100,16 +63,96 @@ jobs:
         continue-on-error: true
         uses: actions/deploy-pages@v4
 
+      # 3) Klassik manba (gh-pages branshi) rejimi uchun sinxronlash
+      - name: Sync gh-pages branch
+        id: sync
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          git config user.name "xoleric-bot"
+          git config user.email "xolerc@users.noreply.github.com"
+          git fetch origin gh-pages
+          git checkout -B gh-pages origin/gh-pages
+          cp "$GITHUB_WORKSPACE/index.html" .
+          cp "$GITHUB_WORKSPACE/three.min.js" .
+          git add -A
+          git commit -m "deploy: $(git rev-parse --short HEAD)" || true
+          git push origin gh-pages
+          echo "exit=$?" >> $GITHUB_STEP_SUMMARY
+
+      # 4) Jonli saytni SOLISHTIRIB tekshirish (md5)
+      - name: Verify live deployment
+        id: verify
+        env:
+          LIVE: "https://xolerc.github.io/xoleric-home/"
+        run: |
+          set +e
+          local_md5=$(md5sum "$GITHUB_WORKSPACE/index.html" | cut -d' ' -f1)
+          echo "### 🔍 Jonli saytni tekshirish" >> "$GITHUB_STEP_SUMMARY"
+          echo "- local md5: \`$local_md5\`" >> "$GITHUB_STEP_SUMMARY"
+          match=0
+          for i in 1 2 3 4 5 6 7 8; do
+            live_md5=$(curl -s "$LIVE/?v=$RANDOM$i" | md5sum | cut -d' ' -f1)
+            echo "- urinish $i → \`$live_md5\`" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$live_md5" = "$local_md5" ]; then match=1; break; fi
+            sleep 20
+          done
+          echo "MATCH=$match" > /tmp/verify.txt
+          echo "MATCH=$match" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$match" = "1" ]; then
+            echo "✅ Jonli sayt yangilangan kodi bilan mos" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "⚠️ Jonli sayt hali yangilanmagan (CDN kechikishi bo'lishi mumkin)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # 5) Holat faylini yozish
+      - name: Publish status file
+        if: always()
+        continue-on-error: true
+        run: |
+          set +e
+          mkdir -p .madina
+          python3 - <<'PY' > .madina/pages-status.json
+          import json, datetime, subprocess, os
+          try:
+              cfg = json.load(open('/tmp/pages.json'))
+          except Exception:
+              cfg = {}
+          ver = {}
+          try:
+              ver = dict(l.strip().split('=', 1) for l in open('/tmp/verify.txt') if '=' in l)
+          except Exception:
+              pass
+          out = {
+              "deployed_at": datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+              "commit": subprocess.run(['git','rev-parse','--short','HEAD'], capture_output=True, text=True).stdout.strip(),
+              "live": "https://xolerc.github.io/xoleric-home/",
+              "pages": {"build_type": cfg.get("build_type"), "source": cfg.get("source"), "html_url": cfg.get("html_url")},
+              "live_matches_main": ver.get("MATCH") == "1",
+          }
+          print(json.dumps(out, indent=2, ensure_ascii=False))
+          PY
+          cat .madina/pages-status.json
+          git config user.name "xoleric-bot"
+          git config user.email "xolerc@users.noreply.github.com"
+          git add .madina/pages-status.json
+          git commit -m "chore: pages holat fayli [skip ci]" || true
+          git push origin HEAD:main || true
+
       - name: Natija
         if: always()
         env:
-          DEPLOY_OUTCOME: ${{ steps.deployment.outcome }}
-          DEPLOY_URL: ${{ steps.deployment.outputs.page_url }}
+          DEPLOY: ${{ steps.deployment.outcome }}
+          SYNC: ${{ steps.sync.outcome }}
+          VERIFY: ${{ steps.verify.outcome }}
         run: |
           {
             echo ""
             echo "### 🚀 Natija"
-            echo "- deploy-pages: \`$DEPLOY_OUTCOME\`"
-            echo "- page_url: ${DEPLOY_URL:-branch orqali (main) — avtomatik}"
+            echo "- deploy-pages: \`$DEPLOY\`"
+            echo "- gh-pages sync: \`$SYNC\`"
+            echo "- tekshiruv: \`$VERIFY\`"
             echo "- live: https://xolerc.github.io/xoleric-home/"
           } >> "$GITHUB_STEP_SUMMARY"
