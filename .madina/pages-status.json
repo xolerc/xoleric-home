@@ -1,6 +1,6 @@
 {
-  "deployed_at": "2026-10-20T20:03:12Z",
-  "commit": "ffae896",
+  "deployed_at": "2026-10-20T20:17:06Z",
+  "commit": "08947e0",
   "live": "https://xolerc.github.io/xoleric-home/",
   "pages": {
     "build_type": "legacy",
@@ -9,5 +9,6 @@
       "path": "/"
     },
     "html_url": "https://xolerc.github.io/xoleric-home/"
-  }
+  },
+  "live_matches_main": true
 }
